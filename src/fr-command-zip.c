@@ -174,6 +174,8 @@ list__begin (gpointer data)
 }
 
 
+extern char* guess_encoding_by_lsar(const char* file);
+
 static gboolean
 fr_command_zip_list (FrCommand  *comm)
 {
@@ -182,6 +184,16 @@ fr_command_zip_list (FrCommand  *comm)
 	fr_process_begin_command (comm->process, "unzip");
 	fr_process_set_begin_func (comm->process, list__begin, comm);
 	fr_process_add_arg (comm->process, "-ZTs");
+
+	char* cs = guess_encoding_by_lsar(comm->filename);
+	if (cs != 0) {
+		fr_process_add_arg (comm->process, "-O");
+		fr_process_add_arg (comm->process, cs);
+		fr_process_add_arg (comm->process, "-I");
+		fr_process_add_arg (comm->process, cs);
+		g_free(cs);
+	}
+
 	fr_process_add_arg (comm->process, "--");
 	fr_process_add_arg (comm->process, comm->filename);
 	fr_process_end_command (comm->process);
@@ -300,6 +312,15 @@ fr_command_zip_extract (FrCommand  *comm,
 				      comm);
 
 	fr_process_begin_command (comm->process, "unzip");
+
+	char* cs = guess_encoding_by_lsar(comm->filename);
+	if (cs != 0) {
+		fr_process_add_arg (comm->process, "-O");
+		fr_process_add_arg (comm->process, cs);
+		fr_process_add_arg (comm->process, "-I");
+		fr_process_add_arg (comm->process, cs);
+		g_free(cs);
+	}
 
 	if (dest_dir != NULL) {
 		fr_process_add_arg (comm->process, "-d");

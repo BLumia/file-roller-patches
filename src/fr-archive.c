@@ -554,6 +554,10 @@ create_archive_for_mime_type (GType          archive_type,
 			      const char    *mime_type,
 			      FrArchiveCaps  requested_capabilities)
 {
+	extern GType guess_archive_type_by_lsar(GType, GFile*);
+
+	archive_type = guess_archive_type_by_lsar(archive_type, file);
+
 	FrArchive *archive;
 
 	if (archive_type == 0)
