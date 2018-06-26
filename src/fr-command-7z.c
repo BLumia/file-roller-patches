@@ -188,7 +188,10 @@ list__process_line (char     *line,
 static void
 fr_command_7z_begin_command (FrCommand *comm)
 {
-	if (_g_program_is_in_path ("7z"))
+	FrArchive *archive = FR_ARCHIVE (comm);
+	if ( _g_mime_type_matches (archive->mime_type,"application/zip") || _g_mime_type_matches (archive->mime_type,"application/x-cbz") && _g_program_is_in_path("7za"))
+		fr_process_begin_command (comm->process, "7za");
+	else if (_g_program_is_in_path ("7z"))
 		fr_process_begin_command (comm->process, "7z");
 	else if (_g_program_is_in_path ("7za"))
 		fr_process_begin_command (comm->process, "7za");
