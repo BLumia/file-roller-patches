@@ -1,0 +1,224 @@
+From 5f234a6828584d0fe2c2c3e409fc46d8fd71f0ea Mon Sep 17 00:00:00 2001
+From: snyh <snyh@snyh.org>
+Date: Mon, 25 Sep 2017 11:55:05 +0800
+Subject: [PATCH 1/2] guess-zip-charset
+
+1. 使用lsar检测压缩文件信息
+2. 如果为zip文件且压缩方式是0或8则，使用unzip.
+3. 如果为tar文件且编码为gb18030或含2312字符串，则使用unar.
+---
+ src/fr-archive.c       |   4 ++
+ src/fr-command-zip.c   |  21 +++++++
+ src/fr-guess-charset.c | 139 +++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 164 insertions(+)
+ create mode 100644 src/fr-guess-charset.c
+
+diff --git a/src/fr-archive.c b/src/fr-archive.c
+index 163f035c..88e1bb32 100644
+--- a/src/fr-archive.c
++++ b/src/fr-archive.c
+@@ -554,6 +554,10 @@ create_archive_for_mime_type (GType          archive_type,
+ 			      const char    *mime_type,
+ 			      FrArchiveCaps  requested_capabilities)
+ {
++	extern GType guess_archive_type_by_lsar(GType, GFile*);
++
++	archive_type = guess_archive_type_by_lsar(archive_type, file);
++
+ 	FrArchive *archive;
+ 
+ 	if (archive_type == 0)
+diff --git a/src/fr-command-zip.c b/src/fr-command-zip.c
+index 937a2def..f2b8f66d 100644
+--- a/src/fr-command-zip.c
++++ b/src/fr-command-zip.c
+@@ -174,6 +174,8 @@ list__begin (gpointer data)
+ }
+ 
+ 
++extern char* guess_encoding_by_lsar(const char* file);
++
+ static gboolean
+ fr_command_zip_list (FrCommand  *comm)
+ {
+@@ -182,6 +184,16 @@ fr_command_zip_list (FrCommand  *comm)
+ 	fr_process_begin_command (comm->process, "unzip");
+ 	fr_process_set_begin_func (comm->process, list__begin, comm);
+ 	fr_process_add_arg (comm->process, "-ZTs");
++
++	char* cs = guess_encoding_by_lsar(comm->filename);
++	if (cs != 0) {
++		fr_process_add_arg (comm->process, "-O");
++		fr_process_add_arg (comm->process, cs);
++		fr_process_add_arg (comm->process, "-I");
++		fr_process_add_arg (comm->process, cs);
++		g_free(cs);
++	}
++
+ 	fr_process_add_arg (comm->process, "--");
+ 	fr_process_add_arg (comm->process, comm->filename);
+ 	fr_process_end_command (comm->process);
+@@ -301,6 +313,15 @@ fr_command_zip_extract (FrCommand  *comm,
+ 
+ 	fr_process_begin_command (comm->process, "unzip");
+ 
++	char* cs = guess_encoding_by_lsar(comm->filename);
++	if (cs != 0) {
++		fr_process_add_arg (comm->process, "-O");
++		fr_process_add_arg (comm->process, cs);
++		fr_process_add_arg (comm->process, "-I");
++		fr_process_add_arg (comm->process, cs);
++		g_free(cs);
++	}
++
+ 	if (dest_dir != NULL) {
+ 		fr_process_add_arg (comm->process, "-d");
+ 		fr_process_add_arg (comm->process, dest_dir);
+diff --git a/src/fr-guess-charset.c b/src/fr-guess-charset.c
+new file mode 100644
+index 00000000..0cacad5b
+--- /dev/null
++++ b/src/fr-guess-charset.c
+@@ -0,0 +1,139 @@
++#include <json-glib/json-glib.h>
++#include "file-utils.h"
++#include "glib-utils.h"
++#include "fr-command-zip.h"
++#include "fr-command-unarchiver.h"
++
++/*
++********* encoding判断逻辑 *************
++
++case lsarConfidence值 of
++  0 -> return utf-8
++  (0, 0.5) -> return 0 (直接使用unzip自身的检测逻辑)
++  [0.5, 1] -> return lsarEncoding
++*/
++
++/*
++*********** 已知逻辑 *****************
++2. lsar的encoding分析存在不准确的情况 (360生成测试文件, gb18030编码, 短文件名)
++1. unzip对中文编码检测支持较好, 但若编码为UTF8(lsar 100%确定)则unzip会失败 (MacOS下生成测试文件)
++ */
++
++typedef void (*DetectFunc)(JsonObject* root, void*);
++
++static
++void detect_by_lsar(const char* file, DetectFunc fn , void* data)
++{
++    if (!_g_program_is_in_path("lsar")) {
++       return;
++    }
++
++    gchar* buf = 0;
++    GError *err = 0;
++    char* quoted_file = g_shell_quote(file);
++    char* cmd  = g_strdup_printf("lsar -j %s", quoted_file);
++    g_free(quoted_file);
++    g_spawn_command_line_sync (cmd,	&buf, 0, 0, &err);
++    g_free(cmd);
++
++    if (err != 0) {
++        g_warning("guess_encoding_by_lsar failed: %s\n", err->message);
++        g_error_free(err);
++        return;
++    }
++
++    JsonParser* parser = json_parser_new ();
++    if (json_parser_load_from_data(parser, buf, -1, 0)) {
++      JsonObject *root = json_node_get_object (json_parser_get_root (parser));
++      fn(root, data);
++    }
++    g_free(buf);
++}
++
++static
++void detect_encoding(JsonObject* root, void* data)
++{
++  double c = json_object_get_double_member (root, "lsarConfidence");
++  char** v = data;
++
++  if (c == 0) {
++    *v = g_strdup("utf-8");
++  } else if (c < 0.5) {
++    // Do nothing
++  } else if (c >= 0.5) {
++    *v = g_strdup(json_object_get_string_member (root, "lsarEncoding"));
++  }
++}
++
++char* guess_encoding_by_lsar(const char* file)
++{
++    char* encoding = 0;
++    detect_by_lsar(file, detect_encoding, &encoding);
++    return encoding;
++}
++
++static
++void should_use_unzip(JsonObject* root, void* ret)
++{
++  gboolean *v = ret;
++  const char* fmt = json_object_get_string_member (root, "lsarFormatName");
++  if (0 != g_strcmp0(fmt, "Zip")) {
++    *v = FALSE;
++    return;
++  }
++
++  JsonArray* contents = json_object_get_array_member(root, "lsarContents");
++  for (int i=0; i<json_array_get_length(contents); i++) {
++    JsonNode* node = json_array_get_element(contents, i);
++    JsonObject* obj = json_node_get_object(node);
++    gint64 m = json_object_get_int_member(obj, "ZipCompressionMethod");
++    if (m != 0 && m != 8) {
++      *v = FALSE;
++      g_warning("/usr/bin/unzip can't handle compression method of %ld\n", m);
++      return;
++    }
++  }
++  *v = TRUE;
++}
++
++static
++void should_use_unar_for_tar(JsonObject* root, void *ret)
++{
++  gboolean *v = ret;
++  const char* encoding = json_object_get_string_member (root, "lsarEncoding");
++  if (0 == g_strcmp0(encoding, "gb18030") ||
++      0 != g_strstr_len(encoding, 100, "2312")) {
++    const char* fmt = json_object_get_string_member (root, "lsarFormatName");
++    if (0 == g_strcmp0(fmt, "Tar")) {
++      *v = TRUE;
++      return;
++    }
++  }
++  *v = FALSE;
++}
++
++GType guess_archive_type_by_lsar(GType t, GFile *file)
++{
++  GType ret = t;
++
++  char* filename = g_file_get_path(file);
++
++  const char* ext = _g_filename_get_extension (filename);
++
++  if (g_strcasecmp(ext, ".zip") == 0 || g_strcasecmp(ext, ".zipx") == 0) {
++    gboolean v = FALSE;
++    detect_by_lsar(filename, should_use_unzip, &v);
++    if (v)  {
++      ret =  FR_TYPE_COMMAND_ZIP;
++    }
++  } else if (g_strcasecmp(ext, ".tar") == 0) {
++    gboolean v = FALSE;
++    detect_by_lsar(filename, should_use_unar_for_tar, &v);
++    if (v)  {
++      ret =  FR_TYPE_COMMAND_UNARCHIVER;
++    }
++  }
++
++  g_free(filename);
++  return ret;
++}
+-- 
+2.17.0
+
