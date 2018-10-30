@@ -40,6 +40,7 @@ source_files = files(
   'fr-error.c',
   'fr-file-selector-dialog.c',
   'fr-init.c',
+  'fr-guess-charset.c',
   'fr-list-model.c',
   'fr-location-bar.c',
   'fr-new-archive-dialog.c',
