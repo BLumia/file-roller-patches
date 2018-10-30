@@ -55,13 +55,47 @@ void detect_encoding(JsonObject* root, void* data)
 {
   double c = json_object_get_double_member (root, "lsarConfidence");
   char** v = data;
+  JsonArray * arr = json_object_get_array_member(root, "lsarContents");
+  int stringLen = 0;
+  int prevIsPercent = 0, uriEncodedCharCnt = 0;
+
+  // blumia: lsar 可能会错误的认定某个文件的编码为 utf-8，但在这时，`lsar -j` 给出的文件名会使用 urlencode 编码无法正确显示/解析
+  //         的文件名. 此处通过统计被 urlencode 过的字符的数量（相当于 uriEncodedCharCnt / 3） 并当发现出现可能包含两个汉字的情况
+  //         时，返回使用 unzip 自身的检测逻辑而不是信任 lsar 的结果. 这种策略依然可能推断失败，但 unzip 本身也会试图解决编码问题故
+  //         应该不会有太大问题。
+  // blumia: 注意，为了节省开销，这里只读取了一个文件名（第一个文件的文件名）以进行分析。
+  if (arr) {
+    JsonObject * aNode = json_array_get_object_element(arr, 0);
+    const gchar * aUrlEncodedFileName = json_object_get_string_member(aNode, "XADFileName");
+    stringLen = strlen(aUrlEncodedFileName);
+    for(int i = 0; i < stringLen; i++) {
+      char chr = aUrlEncodedFileName[i];
+      if (chr == '%') {
+        if (prevIsPercent != 0) {
+          uriEncodedCharCnt += 3;
+        }
+        prevIsPercent++;
+        i += 2;
+      } else {
+        if (prevIsPercent) {
+          i -= 2;
+        }
+        prevIsPercent = 0;
+
+      }
+    }
+    // g_printf("xxxxxxxxxxxxxxxxx %d / %d\n", uriEncodedCharCnt, stringLen);
+  }
 
   if (c == 0) {
     *v = g_strdup("utf-8");
   } else if (c < 0.5) {
     // Do nothing
   } else if (c >= 0.5) {
-    *v = g_strdup(json_object_get_string_member (root, "lsarEncoding"));
+    if (uriEncodedCharCnt < 12) { // 一个字符会被 urlencode 成三个字符（%ab），一个汉字在国标码为两个字符构成
+      *v = g_strdup(json_object_get_string_member (root, "lsarEncoding"));
+    }
+    // else do nothing
   }
 }
 
