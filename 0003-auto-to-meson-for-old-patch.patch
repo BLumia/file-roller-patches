@@ -1,0 +1,24 @@
+From 9f3efa5397a8013f40695f87cf96aab0861a9d97 Mon Sep 17 00:00:00 2001
+From: Gary Wang <wzc782970009@gmail.com>
+Date: Tue, 30 Oct 2018 19:10:10 +0800
+Subject: [PATCH 3/3] auto**** to meson for old patch
+
+---
+ src/meson.build | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/src/meson.build b/src/meson.build
+index 8083aacc..b933678b 100644
+--- a/src/meson.build
++++ b/src/meson.build
+@@ -40,6 +40,7 @@ source_files = files(
+   'fr-error.c',
+   'fr-file-selector-dialog.c',
+   'fr-init.c',
++  'fr-guess-charset.c',
+   'fr-list-model.c',
+   'fr-location-bar.c',
+   'fr-new-archive-dialog.c',
+-- 
+2.17.0
+

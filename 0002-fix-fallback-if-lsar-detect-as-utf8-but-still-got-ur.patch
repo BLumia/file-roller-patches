@@ -1,7 +1,7 @@
-From 3ed2c52c3e2f1d1a36b45b3f2e71cf98b6c2be03 Mon Sep 17 00:00:00 2001
+From 6976c03db210344217dd58cb0f307e1ea0a24074 Mon Sep 17 00:00:00 2001
 From: Gary Wang <wzc782970009@gmail.com>
 Date: Tue, 30 Oct 2018 18:06:08 +0800
-Subject: [PATCH 2/2] fix: fallback if lsar detect as utf8 but still got
+Subject: [PATCH 2/3] fix: fallback if lsar detect as utf8 but still got
  urlencoded output
 
 ---
