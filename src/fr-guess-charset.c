@@ -5,21 +5,90 @@
 #include "fr-command-unarchiver.h"
 
 /*
-********* encoding判断逻辑 *************
+********* encoding判断逻辑(伪代码) *************
+let encoding = match lsarConfidence {
+  0 => “utf-8”,
+  0.5 ... 1 if uriencoded_chars_count < 12 => lsarEncoding(), // 使用 lsar 的检测结果
+  _ => unzip_detect_logic() // 使用 unzip 的检测逻辑
+}
 
-case lsarConfidence值 of
-  0 -> return utf-8
-  (0, 0.5) -> return 0 (直接使用unzip自身的检测逻辑)
-  [0.5, 1] -> return lsarEncoding
-*/
+*********** 关于 lsar 可能认定编码出现偏差 ***********
+lsar 可能会错误的认定某个文件的编码为 utf-8，但在这时，`lsar -j` 给出的文件名会使用 urlencode 编码无法正确显示/解析的文件名. 此处通过统计被
+urlencode 过的字符的数量并当发现出现 **可能** 包含两个汉字的情况时，返回使用 unzip 自身的检测逻辑而不是信任 lsar 的结果. 这种策略依然可能推断
+失败，但 unzip 本身也会试图解决编码问题故应该不会有太大问题。
 
-/*
 *********** 已知逻辑 *****************
+3. lsar 的编码检测认定为 utf-8 时，如果文件名出现明显被 uriencode 过的情况，那么此时很可能 lsar 的编码检测是错误的，此时应当转而使用 unzip
 2. lsar的encoding分析存在不准确的情况 (360生成测试文件, gb18030编码, 短文件名)
 1. unzip对中文编码检测支持较好, 但若编码为UTF8(lsar 100%确定)则unzip会失败 (MacOS下生成测试文件)
  */
 
 typedef void (*DetectFunc)(JsonObject* root, void*);
+
+/**
+ * count_uriencoded_chars:
+ * @str: 指向需要被统计被 uriencoded 过的字符数量的字符串指针
+ *
+ * 统计某个字符串中包含的被 urlencoded 过的可能是中文的字符数量。
+ *
+ * 仅当有两个相邻的字符被 uriencoded 才会被认定可能是中文（如 "%12%34" 会被认定为可能是中文而 "%12_%34" 不会）。统计会返回计数的字符数量，结果
+ * 总是 3 的倍数（因为类如 "%12" 是三个字符构成的）。
+ *
+ * 该函数不会接管 (const gchar*)str 的所有权。
+ */
+static
+int count_uriencoded_chars(const gchar* str)
+{
+  int prevIsPercent = 0, uriEncodedCharCnt = 0;
+  int stringLen = strlen(str);
+  for(int i = 0; i < stringLen; i++) {
+    char chr = str[i];
+    if (chr == '%') {
+      if (prevIsPercent != 0) {
+        uriEncodedCharCnt += 3;
+      }
+      prevIsPercent++;
+      i += 2;
+    } else {
+      if (prevIsPercent) {
+        i -= 2;
+      }
+      prevIsPercent = 0;
+    }
+  }
+  // g_printf("xxxxxxxxxxxxxxxxx %d / %d\n", uriEncodedCharCnt, stringLen);
+  return uriEncodedCharCnt;
+}
+
+/**
+ * negative_inference_detected:
+ * @root: 用于分析文件名的 Json Object 指针
+ *
+ * 统计 lsar -j 得到的 Json 中解析出的文件名，并返回对 lsar 编码是否存在问题的猜测。
+ *
+ * 当认定 lsar 给出的编码可能存在问题时返回 1 （表示否定 lsar 的猜测），否则返回 0。
+ *
+ * 该函数不会接管 (JsonObject*)root 的所有权。
+ */
+static
+int negative_inference_detected(JsonObject* root)
+{
+  JsonArray * arr = json_object_get_array_member(root, "lsarContents");
+
+  if (arr) {
+    int elemCount = json_array_get_length(arr);
+    for(int i = 0; i < elemCount; i++) {
+      JsonObject * aNode = json_array_get_object_element(arr, 0);
+      const gchar * aUrlEncodedFileName = json_object_get_string_member(aNode, "XADFileName");
+      int charCount = count_uriencoded_chars(aUrlEncodedFileName);
+      if (charCount >= 12) {
+        return 1;
+      }
+    }
+  }
+
+  return 0;
+}
 
 static
 void detect_by_lsar(const char* file, DetectFunc fn , void* data)
@@ -55,44 +124,13 @@ void detect_encoding(JsonObject* root, void* data)
 {
   double c = json_object_get_double_member (root, "lsarConfidence");
   char** v = data;
-  JsonArray * arr = json_object_get_array_member(root, "lsarContents");
-  int stringLen = 0;
-  int prevIsPercent = 0, uriEncodedCharCnt = 0;
-
-  // blumia: lsar 可能会错误的认定某个文件的编码为 utf-8，但在这时，`lsar -j` 给出的文件名会使用 urlencode 编码无法正确显示/解析
-  //         的文件名. 此处通过统计被 urlencode 过的字符的数量（相当于 uriEncodedCharCnt / 3） 并当发现出现可能包含两个汉字的情况
-  //         时，返回使用 unzip 自身的检测逻辑而不是信任 lsar 的结果. 这种策略依然可能推断失败，但 unzip 本身也会试图解决编码问题故
-  //         应该不会有太大问题。
-  // blumia: 注意，为了节省开销，这里只读取了一个文件名（第一个文件的文件名）以进行分析。
-  if (arr) {
-    JsonObject * aNode = json_array_get_object_element(arr, 0);
-    const gchar * aUrlEncodedFileName = json_object_get_string_member(aNode, "XADFileName");
-    stringLen = strlen(aUrlEncodedFileName);
-    for(int i = 0; i < stringLen; i++) {
-      char chr = aUrlEncodedFileName[i];
-      if (chr == '%') {
-        if (prevIsPercent != 0) {
-          uriEncodedCharCnt += 3;
-        }
-        prevIsPercent++;
-        i += 2;
-      } else {
-        if (prevIsPercent) {
-          i -= 2;
-        }
-        prevIsPercent = 0;
-
-      }
-    }
-    // g_printf("xxxxxxxxxxxxxxxxx %d / %d\n", uriEncodedCharCnt, stringLen);
-  }
 
   if (c == 0) {
     *v = g_strdup("utf-8");
   } else if (c < 0.5) {
     // Do nothing
   } else if (c >= 0.5) {
-    if (uriEncodedCharCnt < 12) { // 一个字符会被 urlencode 成三个字符（%ab），一个汉字在国标码为两个字符构成
+    if (!negative_inference_detected(root)) {
       *v = g_strdup(json_object_get_string_member (root, "lsarEncoding"));
     }
     // else do nothing
