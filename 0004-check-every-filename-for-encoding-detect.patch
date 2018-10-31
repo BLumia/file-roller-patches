@@ -1,7 +1,7 @@
 From 90810e29613c33dc3c41538a3fae6ff6f679b586 Mon Sep 17 00:00:00 2001
 From: Gary Wang <wzc782970009@gmail.com>
 Date: Wed, 31 Oct 2018 13:43:01 +0800
-Subject: [PATCH 4/4] check every filename for encoding detect
+Subject: [PATCH 4/5] check every filename for encoding detect
 
 ---
  src/fr-guess-charset.c | 116 +++++++++++++++++++++++++++--------------

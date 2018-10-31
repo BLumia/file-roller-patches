@@ -1,0 +1,28 @@
+From 0e9d42b86452323489ea4d45cd222d88db639c0c Mon Sep 17 00:00:00 2001
+From: snyh <snyh@snyh.org>
+Date: Tues, 26 Jun 2018 16:01:56 +0800
+Subject: [PATCH 5/5] exchange 7z to 7za
+
+---
+ src/fr-command-7z.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/src/fr-command-7z.c b/src/fr-command-7z.c
+index 617a964c..21e4ecf4 100644
+--- a/src/fr-command-7z.c
++++ b/src/fr-command-7z.c
+@@ -188,7 +188,10 @@ list__process_line (char     *line,
+ static void
+ fr_command_7z_begin_command (FrCommand *comm)
+ {
+-	if (_g_program_is_in_path ("7z"))
++	FrArchive *archive = FR_ARCHIVE (comm);
++	if ( _g_mime_type_matches (archive->mime_type,"application/zip") || _g_mime_type_matches (archive->mime_type,"application/x-cbz") && _g_program_is_in_path("7za"))
++		fr_process_begin_command (comm->process, "7za");
++	else if (_g_program_is_in_path ("7z"))
+ 		fr_process_begin_command (comm->process, "7z");
+ 	else if (_g_program_is_in_path ("7za"))
+ 		fr_process_begin_command (comm->process, "7za");
+-- 
+2.17.0
+
