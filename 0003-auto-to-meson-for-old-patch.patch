@@ -1,7 +1,7 @@
 From 9f3efa5397a8013f40695f87cf96aab0861a9d97 Mon Sep 17 00:00:00 2001
 From: Gary Wang <wzc782970009@gmail.com>
 Date: Tue, 30 Oct 2018 19:10:10 +0800
-Subject: [PATCH 3/3] auto**** to meson for old patch
+Subject: [PATCH 3/4] auto**** to meson for old patch
 
 ---
  src/meson.build | 1 +
